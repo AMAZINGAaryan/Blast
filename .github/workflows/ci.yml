@@ -3,23 +3,21 @@ name: CI
 on:
   schedule:
     - cron: '*/5 * * * *'
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       vus:
-        description: 'VUs per shard'
+        description: 'VUs per shard (safe max ~5000 on GitHub runner)'
         required: false
-        default: '10000'
-      shards:
-        description: 'Parallel shards (max 20)'
-        required: false
-        default: '20'
+        default: '5000'
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-run
-  cancel-in-progress: true
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   run:
@@ -28,7 +26,6 @@ jobs:
     timeout-minutes: 350
     strategy:
       fail-fast: false
-      max-parallel: 20
       matrix:
         shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
     steps:
@@ -51,12 +48,12 @@ jobs:
 
       - name: Run
         env:
-          VUS: ${{ github.event.inputs.vus || '10000' }}
+          VUS: ${{ github.event.inputs.vus || '5000' }}
         run: |
-          end=$((SECONDS + 20400))
-          while [ $SECONDS -lt $end ]; do
-            VUS="$VUS" RAMP=30s HOLD=5m k6 run k6/tongadive.js \
-              --no-color --quiet 2>&1 \
-              | grep -E "hits:" || true
-            sleep 2
+          echo "Shard ${{ matrix.shard }} starting | VUS=$VUS | looping until job timeout"
+          while true; do
+            echo "[$(date -u +%H:%M:%S)] Shard ${{ matrix.shard }} cycle start ($VUS VUs)"
+            VUS="$VUS" RAMP=20s HOLD=4m k6 run k6/tongadive.js --no-color 2>&1 \
+              | grep -E "hits:|level=error" | tail -3 || true
+            echo "[$(date -u +%H:%M:%S)] Shard ${{ matrix.shard }} cycle done - restarting"
           done
