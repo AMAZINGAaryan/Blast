@@ -56,7 +56,7 @@ jobs:
           end=$((SECONDS + 20400))
           while [ $SECONDS -lt $end ]; do
             VUS="$VUS" RAMP=30s HOLD=5m k6 run k6/tongadive.js \
-              --no-color --quiet 2>/dev/null \
+              --no-color --quiet 2>&1 \
               | grep -E "hits:" || true
             sleep 2
           done
