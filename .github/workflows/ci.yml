@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      vus:
+        description: 'VUs per shard'
+        required: false
+        default: '10000'
+      shards:
+        description: 'Parallel shards (max 20)'
+        required: false
+        default: '20'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-run
+  cancel-in-progress: true
+
+jobs:
+  run:
+    name: Job ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Setup
+        run: |
+          curl -fsSL https://github.com/grafana/k6/releases/download/v0.56.0/k6-v0.56.0-linux-amd64.tar.gz \
+            | tar -xz --strip-components=1 -C /usr/local/bin k6-v0.56.0-linux-amd64/k6
+          k6 version
+
+      - name: Tune
+        run: |
+          sudo sysctl -w net.ipv4.ip_local_port_range="1024 65535" >/dev/null 2>&1 || true
+          sudo sysctl -w net.core.somaxconn=65535 >/dev/null 2>&1 || true
+          ulimit -n 1048576 2>/dev/null || true
+
+      - name: Run
+        env:
+          VUS: ${{ github.event.inputs.vus || '10000' }}
+        run: |
+          end=$((SECONDS + 20400))
+          while [ $SECONDS -lt $end ]; do
+            VUS="$VUS" RAMP=30s HOLD=5m k6 run k6/tongadive.js \
+              --no-color --quiet 2>/dev/null \
+              | grep -E "hits:" || true
+            sleep 2
+          done
