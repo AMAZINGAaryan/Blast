@@ -27,7 +27,7 @@ CUR_PID=""
 CUR_SIG=""
 
 ncpu=$(nproc); ram=$(awk '/MemTotal/{printf "%d",$2/1024/1024}' /proc/meminfo); [ "$ram" -lt 1 ] && ram=1
-BUDGET=$(( ram * 800 )); [ "$BUDGET" -gt 4000 ] && BUDGET=4000   # micro VM: keep modest
+BUDGET=$(( ram * 800 )); [ "$BUDGET" -gt 20000 ] && BUDGET=20000   # scales with RAM (micro~800, ARM~19200)
 
 start_k6() {
   local target="$1" scenario="$2" mode="$3" vus="$4"
