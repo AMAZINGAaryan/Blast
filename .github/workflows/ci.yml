@@ -1,23 +1,39 @@
 name: CI
 
+# Continuous load test. Domain-agnostic: set TARGET below (or via
+# "Run workflow" inputs). Engine auto-discovers all pages from the
+# site's sitemap.xml.
+#
+# NO concurrency block on purpose: that was cancelling queued runs.
+# Each scheduled/dispatched run is independent and runs to its timeout.
+
 on:
-  schedule:
-    - cron: '*/5 * * * *'
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
+      target:
+        description: 'Target URL (any domain)'
+        required: false
+        default: 'https://www.tongadive.com'
+      mode:
+        description: 'max (hammer) or rate (event-driven)'
+        required: false
+        default: 'max'
       vus:
-        description: 'VUs per shard (safe max ~5000 on GitHub runner)'
+        description: 'VUs per shard (max mode)'
         required: false
         default: '5000'
+      rate:
+        description: 'req/s per shard (rate mode)'
+        required: false
+        default: '5000'
+  push:
+    branches: [main]
+  schedule:
+    # every 5h: a fresh run starts as the previous (350-min) one ends.
+    - cron: '17 */5 * * *'
 
 permissions:
   contents: read
-
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: false
 
 jobs:
   run:
@@ -27,33 +43,39 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+        shard: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: main
+      - uses: actions/checkout@v4
+        with: { ref: main }
 
-      - name: Setup
+      - name: Install k6
         run: |
           curl -fsSL https://github.com/grafana/k6/releases/download/v0.56.0/k6-v0.56.0-linux-amd64.tar.gz \
             | tar -xz --strip-components=1 -C /usr/local/bin k6-v0.56.0-linux-amd64/k6
           k6 version
 
-      - name: Tune
+      - name: Tune kernel
         run: |
-          sudo sysctl -w net.ipv4.ip_local_port_range="1024 65535" >/dev/null 2>&1 || true
-          sudo sysctl -w net.core.somaxconn=65535 >/dev/null 2>&1 || true
+          sudo sysctl -w net.ipv4.ip_local_port_range="1024 65535" 2>/dev/null || true
+          sudo sysctl -w net.core.somaxconn=65535 2>/dev/null || true
           ulimit -n 1048576 2>/dev/null || true
 
-      - name: Run
+      - name: Blast
         env:
-          VUS: ${{ github.event.inputs.vus || '5000' }}
+          TARGET: ${{ github.event.inputs.target || 'https://www.tongadive.com' }}
+          MODE:   ${{ github.event.inputs.mode   || 'max' }}
+          VUS:    ${{ github.event.inputs.vus    || '5000' }}
+          RATE:   ${{ github.event.inputs.rate   || '5000' }}
         run: |
-          echo "Shard ${{ matrix.shard }} starting | VUS=$VUS | looping until job timeout"
+          echo "Shard ${{ matrix.shard }} | mode=$MODE | target=$TARGET"
+          # Loop k6 in 5-min cycles until the 350-min job timeout ends it.
+          # 'trap' makes a cancel exit cleanly (0) instead of looking failed.
+          trap 'echo "shard ${{ matrix.shard }} stopping"; exit 0' INT TERM
           while true; do
-            echo "[$(date -u +%H:%M:%S)] Shard ${{ matrix.shard }} cycle start ($VUS VUs)"
-            VUS="$VUS" RAMP=20s HOLD=4m k6 run k6/tongadive.js --no-color 2>&1 \
-              | grep -E "hits:|level=error" | tail -3 || true
-            echo "[$(date -u +%H:%M:%S)] Shard ${{ matrix.shard }} cycle done - restarting"
+            k6 run \
+              -e TARGET="$TARGET" -e MODE="$MODE" -e VUS="$VUS" -e RATE="$RATE" \
+              -e DURATION=5m -e SHARD=${{ matrix.shard }} \
+              engine.js --no-color --quiet 2>&1 \
+              | grep -E "discovered|shard|level=error" | tail -4 || true
+            echo "[$(date -u +%H:%M:%S)] shard ${{ matrix.shard }} cycle done - restarting"
           done
