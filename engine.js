@@ -147,7 +147,11 @@ export default function (data) {
     'Upgrade-Insecure-Requests': '1',
   };
   if (ref) headers['Referer'] = ref;
-  const res = http.get(TARGET + path, { headers, timeout: '20s', redirects: 5 });
+  // cache-bust: unique query per request so the CDN can't serve from edge
+  // cache -> forces every request through to the origin server.
+  const sep = path.indexOf('?') >= 0 ? '&' : '?';
+  const url = TARGET + path + sep + '_cb=' + Math.random().toString(36).slice(2) + Date.now();
+  const res = http.get(url, { headers, timeout: '20s', redirects: 5 });
   ttfb.add(res.timings.waiting);
   const good = res.status >= 200 && res.status < 400;
   okR.add(good);
